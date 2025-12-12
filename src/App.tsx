@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 
 import Reel from '@/components/Reel';
 import { SLOT_SYMBOLS, type SlotSymbol } from '@/slotSymbols';
@@ -28,9 +28,11 @@ export default function App() {
   const [started, setStarted] = useState(false);
   const [debtOwed, setDebtOwed] = useState(0);
 
-  const initialFinals = useMemo(() => {
-    return [randomSymbol(), randomSymbol(), randomSymbol()] as const;
-  }, []);
+  const initialFinalsRef = useRef<readonly SlotSymbol[] | null>(null);
+  if (initialFinalsRef.current === null) {
+    initialFinalsRef.current = [randomSymbol(), randomSymbol(), randomSymbol()] as const;
+  }
+  const initialFinals = initialFinalsRef.current;
 
   const [reelStrips, setReelStrips] = useState<SlotSymbol[][]>(() => {
     return initialFinals.map((s) => [s]);
