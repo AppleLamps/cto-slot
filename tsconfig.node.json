@@ -7,7 +7,9 @@
     "moduleResolution": "Bundler",
     "allowSyntheticDefaultImports": true,
     "strict": true,
-    "noEmit": true
+    "noEmit": true,
+    "lib": ["ESNext"],
+    "types": ["node"]
   },
   "include": ["vite.config.ts", "tailwind.config.ts"]
 }
