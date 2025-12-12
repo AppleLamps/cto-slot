@@ -6,9 +6,18 @@ import Reel from '@/components/Reel';
 import { SLOT_SYMBOLS, type SlotSymbol } from '@/slotSymbols';
 import { supabase } from '@/supabaseClient';
 
-const BASE_SPIN_COST = 500;
 const PAIR_DEBT = 2_500;
 const JACKPOT_DEBT = 10_000;
+
+const MISS_COST_MIN = 250;
+const MISS_COST_MAX = 5_000;
+
+const ODDS = {
+  jackpot: 0.01,
+  pair: 0.12
+} as const;
+
+type Finals = readonly [SlotSymbol, SlotSymbol, SlotSymbol];
 
 const PAIR_MULTIPLIER_BY_SYMBOL: Record<string, number> = {
   bug: 1.1,
@@ -34,6 +43,63 @@ const money = new Intl.NumberFormat('en-US', {
 
 function randomSymbol(): SlotSymbol {
   return SLOT_SYMBOLS[Math.floor(Math.random() * SLOT_SYMBOLS.length)]!;
+}
+
+function randomInt(min: number, max: number) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function weightedRandomSymbol(): SlotSymbol {
+  const weights: Record<string, number> = {
+    coffee: 32,
+    bug: 26,
+    laptop: 20,
+    error: 14,
+    fire: 8
+  };
+
+  let total = 0;
+  for (const s of SLOT_SYMBOLS) total += weights[s.id] ?? 1;
+
+  let r = Math.random() * total;
+  for (const s of SLOT_SYMBOLS) {
+    r -= weights[s.id] ?? 1;
+    if (r <= 0) return s;
+  }
+
+  return SLOT_SYMBOLS[0]!;
+}
+
+function distinctTriple(): Finals {
+  const a = weightedRandomSymbol();
+  let b = weightedRandomSymbol();
+  while (b.id === a.id) b = weightedRandomSymbol();
+  let c = weightedRandomSymbol();
+  while (c.id === a.id || c.id === b.id) c = weightedRandomSymbol();
+  return [a, b, c] as const;
+}
+
+function generateFinals(): Finals {
+  const roll = Math.random();
+  if (roll < ODDS.jackpot) {
+    const s = weightedRandomSymbol();
+    return [s, s, s] as const;
+  }
+
+  if (roll < ODDS.jackpot + ODDS.pair) {
+    const s = weightedRandomSymbol();
+    const other = distinctTriple().find((x) => x.id !== s.id) ?? randomSymbol();
+    const pair: SlotSymbol[] = [s, s, other];
+    for (let i = pair.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const tmp = pair[i]!;
+      pair[i] = pair[j]!;
+      pair[j] = tmp;
+    }
+    return [pair[0]!, pair[1]!, pair[2]!] as const;
+  }
+
+  return distinctTriple();
 }
 
 function buildStrip(finalSymbol: SlotSymbol, steps: number): SlotSymbol[] {
@@ -205,11 +271,12 @@ export default function App() {
       return;
     }
 
-    setMoneyOwedToCto((m) => m + BASE_SPIN_COST);
-    void incrementGlobalTotals(0, BASE_SPIN_COST);
+    const missCharge = randomInt(MISS_COST_MIN, MISS_COST_MAX);
+    setMoneyOwedToCto((m) => m + missCharge);
+    void incrementGlobalTotals(0, missCharge);
     setBanner({
       id: ++bannerIdRef.current,
-      text: `MISS. +${money.format(BASE_SPIN_COST)} OWED TO CTO`,
+      text: `MISS. +${money.format(missCharge)} OWED TO CTO`,
       tone: 'info'
     });
   }, [incrementGlobalTotals]);
@@ -227,7 +294,7 @@ export default function App() {
     setBanner(null);
     setSpinning(true);
 
-    const finals = [randomSymbol(), randomSymbol(), randomSymbol()] as const;
+    const finals = generateFinals();
     currentFinalsRef.current = finals;
 
     setReelStrips([
@@ -256,7 +323,7 @@ export default function App() {
           </div>
 
           <div className="crt rounded-2xl border border-slate-700 bg-black p-4 shadow-inner sm:p-6">
-            <div className="relative z-10 flex flex-col gap-6">
+            <div className="relative z-10 flex flex-col gap-7 sm:gap-8">
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="flex flex-col items-center gap-2">
                   <div className="text-center text-[10px] tracking-[0.22em] text-slate-300 sm:text-xs">
@@ -327,7 +394,7 @@ export default function App() {
                 </button>
 
                 <div className="text-center text-[10px] leading-relaxed text-slate-400">
-                  Miss costs <span className="text-slate-200">{money.format(BASE_SPIN_COST)}</span> owed to CTO.
+                  Miss costs <span className="text-slate-200">{money.format(MISS_COST_MIN)}</span>–<span className="text-slate-200">{money.format(MISS_COST_MAX)}</span> owed to CTO.
                   <br />
                   Pair pays <span className="text-amber-300">{money.format(PAIR_DEBT)}</span> debt. Jackpot pays{' '}
                   <span className="text-amber-300">{money.format(JACKPOT_DEBT)}</span> debt.

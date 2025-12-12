@@ -134,7 +134,7 @@ export default function Chat() {
 
       <div
         ref={listRef}
-        className="h-44 overflow-y-auto rounded-xl border border-slate-700 bg-black/60 px-3 py-2 text-[11px] leading-relaxed text-slate-200 shadow-inner"
+        className="h-48 overflow-y-auto rounded-xl border border-slate-700 bg-black/60 px-3 py-2 text-[11px] leading-relaxed text-slate-200 shadow-inner sm:h-56"
       >
         {messages.length === 0 ? (
           <div className="py-6 text-center text-[10px] tracking-[0.12em] text-slate-500">NO MESSAGES YET</div>
@@ -148,13 +148,13 @@ export default function Chat() {
         )}
       </div>
 
-      <form onSubmit={onSubmit} className="mt-3 flex flex-col gap-2">
-        <div className="flex gap-2">
+      <form onSubmit={onSubmit} className="mt-4 flex flex-col gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row">
           <input
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             disabled={!canUseSupabase}
-            className="w-32 rounded-md border border-slate-700 bg-black/60 px-2 py-2 text-[11px] text-slate-100 outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60 disabled:opacity-50"
+            className="w-full rounded-md border border-slate-700 bg-black/60 px-2 py-2 text-[11px] text-slate-100 outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60 disabled:opacity-50 sm:w-40"
             placeholder="name"
             maxLength={24}
           />
