@@ -1,11 +1,30 @@
 import { AnimatePresence, motion } from 'framer-motion';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
+import Chat from '@/components/Chat';
 import Reel from '@/components/Reel';
 import { SLOT_SYMBOLS, type SlotSymbol } from '@/slotSymbols';
+import { supabase } from '@/supabaseClient';
 
 const BASE_SPIN_COST = 500;
+const PAIR_DEBT = 2_500;
 const JACKPOT_DEBT = 10_000;
+
+const PAIR_MULTIPLIER_BY_SYMBOL: Record<string, number> = {
+  bug: 1.1,
+  coffee: 1,
+  laptop: 1.25,
+  error: 1.75,
+  fire: 2.25
+};
+
+const JACKPOT_MULTIPLIER_BY_SYMBOL: Record<string, number> = {
+  bug: 1.2,
+  coffee: 1,
+  laptop: 1.35,
+  error: 2.25,
+  fire: 3
+};
 
 const money = new Intl.NumberFormat('en-US', {
   style: 'currency',
@@ -27,6 +46,8 @@ function buildStrip(finalSymbol: SlotSymbol, steps: number): SlotSymbol[] {
 export default function App() {
   const [started, setStarted] = useState(false);
   const [debtOwed, setDebtOwed] = useState(0);
+  const [moneyOwedToCto, setMoneyOwedToCto] = useState(0);
+  const [onlineCount, setOnlineCount] = useState<number | null>(null);
 
   const initialFinalsRef = useRef<readonly SlotSymbol[] | null>(null);
   if (initialFinalsRef.current === null) {
@@ -49,31 +70,149 @@ export default function App() {
   const currentFinalsRef = useRef<readonly SlotSymbol[]>(initialFinals);
   const bannerIdRef = useRef(0);
 
+  useEffect(() => {
+    const sb = supabase;
+    if (!sb) return;
+
+    let cancelled = false;
+
+    const fetchTotals = async () => {
+      const { data, error } = await sb
+        .from('global_totals')
+        .select('id, debt_won, money_owed')
+        .eq('id', 1)
+        .maybeSingle();
+
+      if (cancelled) return;
+      if (error) return;
+      if (!data) return;
+
+      setDebtOwed(Number(data.debt_won ?? 0));
+      setMoneyOwedToCto(Number(data.money_owed ?? 0));
+    };
+
+    fetchTotals();
+
+    const totalsChannel = sb
+      .channel('global-totals')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'global_totals' },
+        (payload: { new: unknown; old: unknown }) => {
+          const row = (payload.new ?? payload.old) as { id?: number; debt_won?: number; money_owed?: number };
+          if (row?.id !== 1) return;
+          setDebtOwed(Number(row.debt_won ?? 0));
+          setMoneyOwedToCto(Number(row.money_owed ?? 0));
+        }
+      )
+      .subscribe();
+
+    const clientId = (() => {
+      const existing = sessionStorage.getItem('cto-slot-client-id');
+      if (existing) return existing;
+      const next = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+      sessionStorage.setItem('cto-slot-client-id', next);
+      return next;
+    })();
+    const presenceChannel = sb.channel('online-presence', {
+      config: {
+        presence: {
+          key: clientId
+        }
+      }
+    });
+
+    presenceChannel.on('presence', { event: 'sync' }, () => {
+      const state = presenceChannel.presenceState();
+      setOnlineCount(Object.keys(state).length);
+    });
+
+    presenceChannel.subscribe(async (status: string) => {
+      if (status !== 'SUBSCRIBED') return;
+      await presenceChannel.track({ online_at: new Date().toISOString() });
+    });
+
+    return () => {
+      cancelled = true;
+      void sb.removeChannel(totalsChannel);
+      void sb.removeChannel(presenceChannel);
+    };
+  }, []);
+
+  const incrementGlobalTotals = useCallback(async (deltaDebtWon: number, deltaMoneyOwed: number) => {
+    const sb = supabase;
+    if (!sb) return;
+
+    const { error } = await sb.rpc('increment_global_totals', {
+      delta_debt_won: deltaDebtWon,
+      delta_money_owed: deltaMoneyOwed
+    });
+
+    if (!error) return;
+  }, []);
+
   const startGame = useCallback(() => {
     setStarted(true);
-    setBanner({ id: ++bannerIdRef.current, text: 'READY. SPIN TO ADD DEBT.', tone: 'info' });
+    setBanner({ id: ++bannerIdRef.current, text: 'READY. SPIN TO TEST YOUR LUCK.', tone: 'info' });
   }, []);
 
   const finishSpin = useCallback(() => {
     setSpinning(false);
 
     const [a, b, c] = currentFinalsRef.current;
-    if (a && b && c && a.id === b.id && b.id === c.id) {
-      setDebtOwed((d) => d + JACKPOT_DEBT);
+    if (!a || !b || !c) return;
+
+    const counts = new Map<string, number>();
+    counts.set(a.id, (counts.get(a.id) ?? 0) + 1);
+    counts.set(b.id, (counts.get(b.id) ?? 0) + 1);
+    counts.set(c.id, (counts.get(c.id) ?? 0) + 1);
+
+    const maxCount = Math.max(...counts.values());
+    let matchId: string | null = null;
+    for (const [id, count] of counts.entries()) {
+      if (count === maxCount) {
+        matchId = id;
+        break;
+      }
+    }
+
+    const matchSymbol = matchId ? SLOT_SYMBOLS.find((s) => s.id === matchId) : null;
+    const matchLabel = matchSymbol?.label.toUpperCase();
+
+    if (maxCount === 3) {
+      const multiplier = matchId ? (JACKPOT_MULTIPLIER_BY_SYMBOL[matchId] ?? 1) : 1;
+      const prize = Math.round(JACKPOT_DEBT * multiplier);
+      setDebtOwed((d) => d + prize);
+      void incrementGlobalTotals(prize, 0);
       setBanner({
         id: ++bannerIdRef.current,
-        text: `MATCH! +${money.format(JACKPOT_DEBT)} DEBT`,
+        text: `${matchLabel ? `${matchLabel} ` : ''}JACKPOT! +${money.format(prize)} DEBT`,
         tone: 'win'
       });
       return;
     }
 
+    if (maxCount === 2) {
+      const multiplier = matchId ? (PAIR_MULTIPLIER_BY_SYMBOL[matchId] ?? 1) : 1;
+      const prize = Math.round(PAIR_DEBT * multiplier);
+      setDebtOwed((d) => d + prize);
+      void incrementGlobalTotals(prize, 0);
+      setBanner({
+        id: ++bannerIdRef.current,
+        text: `${matchLabel ? `${matchLabel} ` : ''}PAIR! +${money.format(prize)} DEBT`,
+        tone: 'win'
+      });
+      return;
+    }
+
+    setMoneyOwedToCto((m) => m + BASE_SPIN_COST);
+    void incrementGlobalTotals(0, BASE_SPIN_COST);
     setBanner({
       id: ++bannerIdRef.current,
-      text: `+${money.format(BASE_SPIN_COST)} DEBT`,
+      text: `MISS. +${money.format(BASE_SPIN_COST)} OWED TO CTO`,
       tone: 'info'
     });
-  }, []);
+  }, [incrementGlobalTotals]);
 
   const onReelComplete = useCallback(() => {
     if (!spinning) return;
@@ -87,7 +226,6 @@ export default function App() {
 
     setBanner(null);
     setSpinning(true);
-    setDebtOwed((d) => d + BASE_SPIN_COST);
 
     const finals = [randomSymbol(), randomSymbol(), randomSymbol()] as const;
     currentFinalsRef.current = finals;
@@ -105,23 +243,37 @@ export default function App() {
   const canSpin = started && !spinning;
 
   return (
-    <div className="min-h-screen bg-black px-4 py-8 text-amber-400">
+    <div className="min-h-screen bg-black px-4 py-10 text-amber-400 [background-image:radial-gradient(ellipse_at_top,rgba(255,255,255,0.06),rgba(0,0,0,0.92)_55%),radial-gradient(ellipse_at_center,rgba(251,191,36,0.06),rgba(0,0,0,0.95)_70%)]">
       <div className="mx-auto w-full max-w-3xl">
-        <div className="rounded-[28px] border border-slate-700 bg-gradient-to-b from-slate-900/30 via-black to-black p-4 shadow-[0_30px_80px_rgba(0,0,0,0.75)] sm:p-6">
-          <div className="mb-4 rounded-2xl border border-amber-400/25 bg-gradient-to-b from-slate-800/40 to-slate-950/60 px-4 py-3 shadow-[0_0_40px_rgba(251,191,36,0.10)]">
-            <div className="text-center text-lg tracking-[0.3em] text-amber-400 amber-text sm:text-xl">
-              cto.new
+        <div className="rounded-[28px] border border-slate-700 bg-gradient-to-b from-zinc-950 via-black to-black p-4 shadow-[0_30px_80px_rgba(0,0,0,0.78)] sm:p-6">
+          <div className="mb-5 rounded-2xl border border-slate-700 bg-black px-4 py-3 shadow-[inset_0_0_0_1px_rgba(251,191,36,0.10),0_20px_60px_rgba(0,0,0,0.55)]">
+            <div className="text-center text-lg tracking-[0.22em] text-slate-100 amber-text sm:text-xl">
+              cto<span className="text-slate-300">.new</span>
+            </div>
+            <div className="mt-1 text-center text-[9px] tracking-[0.18em] text-slate-500">
+              {!supabase ? 'LOCAL MODE' : onlineCount === null ? 'CONNECTING…' : `${onlineCount} ONLINE`}
             </div>
           </div>
 
           <div className="crt rounded-2xl border border-slate-700 bg-black p-4 shadow-inner sm:p-6">
             <div className="relative z-10 flex flex-col gap-6">
-              <div className="flex flex-col items-center gap-2">
-                <div className="text-center text-[10px] tracking-[0.22em] text-slate-300 sm:text-xs">
-                  TECHNICAL DEBT OWED
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="flex flex-col items-center gap-2">
+                  <div className="text-center text-[10px] tracking-[0.22em] text-slate-300 sm:text-xs">
+                    TECHNICAL DEBT WON
+                  </div>
+                  <div className="phosphor-text tabular-nums text-3xl text-green-400 sm:text-5xl">
+                    {money.format(debtOwed)}
+                  </div>
                 </div>
-                <div className="phosphor-text tabular-nums text-3xl text-green-400 sm:text-5xl">
-                  {money.format(debtOwed)}
+
+                <div className="flex flex-col items-center gap-2">
+                  <div className="text-center text-[10px] tracking-[0.22em] text-slate-300 sm:text-xs">
+                    MONEY OWED TO CTO
+                  </div>
+                  <div className="tabular-nums text-3xl text-amber-300 amber-text sm:text-5xl">
+                    {money.format(moneyOwedToCto)}
+                  </div>
                 </div>
               </div>
 
@@ -137,9 +289,9 @@ export default function App() {
                     <button
                       type="button"
                       onClick={startGame}
-                      className="blink rounded-lg border border-amber-400/40 bg-black/70 px-5 py-4 text-center text-xs tracking-[0.25em] text-amber-400 amber-text shadow-[0_0_24px_rgba(251,191,36,0.15)] focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/70"
+                      className="blink rounded-md border border-slate-700 bg-black/60 px-8 py-5 text-center text-base tracking-[0.12em] text-slate-200 shadow-[0_0_40px_rgba(255,255,255,0.08)] focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/70"
                     >
-                      INSERT $0
+                      Insert $0
                     </button>
                   </div>
                 )}
@@ -175,15 +327,20 @@ export default function App() {
                 </button>
 
                 <div className="text-center text-[10px] leading-relaxed text-slate-400">
-                  Every spin adds <span className="text-slate-200">{money.format(BASE_SPIN_COST)}</span>.
+                  Miss costs <span className="text-slate-200">{money.format(BASE_SPIN_COST)}</span> owed to CTO.
                   <br />
-                  Matching reels adds <span className="text-amber-300">{money.format(JACKPOT_DEBT)}</span> more.
+                  Pair pays <span className="text-amber-300">{money.format(PAIR_DEBT)}</span> debt. Jackpot pays{' '}
+                  <span className="text-amber-300">{money.format(JACKPOT_DEBT)}</span> debt.
+                  <br />
+                  Some symbols pay higher multipliers.
                 </div>
 
                 <div className="text-center text-[9px] tracking-[0.18em] text-slate-600">
                   INVERTED SLOT MACHINE • SUCCESS = MAINTENANCE
                 </div>
               </div>
+
+              <Chat />
 
             </div>
           </div>
