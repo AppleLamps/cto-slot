@@ -311,7 +311,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-black px-4 py-10 text-amber-400 [background-image:radial-gradient(ellipse_at_top,rgba(255,255,255,0.06),rgba(0,0,0,0.92)_55%),radial-gradient(ellipse_at_center,rgba(251,191,36,0.06),rgba(0,0,0,0.95)_70%)]">
-      <div className="mx-auto w-full max-w-3xl">
+      <div className="mx-auto w-full max-w-4xl">
         <div className="rounded-[28px] border border-slate-700 bg-gradient-to-b from-zinc-950 via-black to-black p-4 shadow-[0_30px_80px_rgba(0,0,0,0.78)] sm:p-6">
           <div className="mb-5 rounded-2xl border border-slate-700 bg-black px-4 py-3 shadow-[inset_0_0_0_1px_rgba(251,191,36,0.10),0_20px_60px_rgba(0,0,0,0.55)]">
             <div className="text-center text-lg tracking-[0.22em] text-slate-100 amber-text sm:text-xl">
@@ -324,7 +324,7 @@ export default function App() {
 
           <div className="crt rounded-2xl border border-slate-700 bg-black p-4 shadow-inner sm:p-6">
             <div className="relative z-10 flex flex-col gap-7 sm:gap-8">
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 sm:gap-12">
                 <div className="flex flex-col items-center gap-2">
                   <div className="text-center text-[10px] tracking-[0.22em] text-slate-300 sm:text-xs">
                     TECHNICAL DEBT WON
